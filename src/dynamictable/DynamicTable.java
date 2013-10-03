@@ -92,7 +92,7 @@ public class DynamicTable extends Application {
                     createColumn(column, headerValues[column]));
               }
             }
-          });
+          }); 
         }
 
         // Data:
