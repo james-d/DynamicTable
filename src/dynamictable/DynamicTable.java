@@ -1,9 +1,13 @@
 package dynamictable;
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.PrintWriter;
 import java.net.URL;
 import java.net.URLConnection;
+import java.util.Iterator;
 
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -27,13 +31,14 @@ import javafx.scene.control.cell.TextFieldTableCell ;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.util.Callback;
 
 public class DynamicTable extends Application {
 
   @Override
-  public void start(Stage primaryStage) {
+  public void start(final Stage primaryStage) {
     final BorderPane root = new BorderPane();
     final TableView<ObservableList<StringProperty>> table = new TableView<>();
     table.setEditable(true);
@@ -47,12 +52,24 @@ public class DynamicTable extends Application {
             headerCheckBox.isSelected());
       }
     });
+
+    final FileChooser fileChooser = new FileChooser();
+    
+    Button saveButton = new Button("Save...");
+    saveButton.setOnAction(new EventHandler<ActionEvent>() {
+        @Override
+        public void handle(ActionEvent event) {
+            save(primaryStage, table, headerCheckBox, fileChooser);
+        }
+    });
+    
     HBox controls = new HBox();
-    controls.getChildren().addAll(urlTextEntry, headerCheckBox);
+    controls.getChildren().addAll(urlTextEntry, headerCheckBox, saveButton);
     HBox.setHgrow(urlTextEntry, Priority.ALWAYS);
     HBox.setHgrow(headerCheckBox, Priority.NEVER);  
     root.setTop(controls);
     root.setCenter(table);
+
     
     Button dumpFirstRowButton = new Button("Show first row");
     dumpFirstRowButton.setOnAction(new EventHandler<ActionEvent>() {
@@ -79,43 +96,44 @@ public class DynamicTable extends Application {
     Task<Void> task = new Task<Void>() {
       @Override
       protected Void call() throws Exception {
-        BufferedReader in = getReaderFromUrl(urlSpec);
-        // Header line
-        if (hasHeader) {
-          final String headerLine = in.readLine();
-          final String[] headerValues = headerLine.split("\t");
-          Platform.runLater(new Runnable() {
-            @Override
-            public void run() {
-              for (int column = 0; column < headerValues.length; column++) {
-                table.getColumns().add(
-                    createColumn(column, headerValues[column]));
-              }
+        try (BufferedReader in = getReaderFromUrl(urlSpec)) {
+            // Header line
+            if (hasHeader) {
+              final String headerLine = in.readLine();
+              final String[] headerValues = headerLine.split("\t");
+              Platform.runLater(new Runnable() {
+                @Override
+                public void run() {
+                  for (int column = 0; column < headerValues.length; column++) {
+                    table.getColumns().add(
+                        createColumn(column, headerValues[column]));
+                  }
+                }
+              }); 
             }
-          }); 
-        }
-
-        // Data:
-
-        String dataLine;
-        while ((dataLine = in.readLine()) != null) {
-          final String[] dataValues = dataLine.split("\t");
-          Platform.runLater(new Runnable() {
-            @Override
-            public void run() {
-              // Add additional columns if necessary:
-              for (int columnIndex = table.getColumns().size(); columnIndex < dataValues.length; columnIndex++) {
-                table.getColumns().add(createColumn(columnIndex, ""));
-              }
-              // Add data to table:
-              ObservableList<StringProperty> data = FXCollections
-                  .observableArrayList();
-              for (String value : dataValues) {
-                data.add(new SimpleStringProperty(value));
-              }
-              table.getItems().add(data);
+    
+            // Data:
+    
+            String dataLine;
+            while ((dataLine = in.readLine()) != null) {
+              final String[] dataValues = dataLine.split("\t");
+              Platform.runLater(new Runnable() {
+                @Override
+                public void run() {
+                  // Add additional columns if necessary:
+                  for (int columnIndex = table.getColumns().size(); columnIndex < dataValues.length; columnIndex++) {
+                    table.getColumns().add(createColumn(columnIndex, ""));
+                  }
+                  // Add data to table:
+                  ObservableList<StringProperty> data = FXCollections
+                      .observableArrayList();
+                  for (String value : dataValues) {
+                    data.add(new SimpleStringProperty(value));
+                  }
+                  table.getItems().add(data);
+                }
+              });
             }
-          });
         }
         return null;
       }
@@ -135,17 +153,16 @@ public class DynamicTable extends Application {
       title = columnTitle;
     }
     column.setText(title);
-    column
-        .setCellValueFactory(new Callback<TableColumn.CellDataFeatures<ObservableList<StringProperty>, String>, ObservableValue<String>>() {
+    column.setCellValueFactory(new Callback<TableColumn.CellDataFeatures<ObservableList<StringProperty>, String>, ObservableValue<String>>() {
           @Override
           public ObservableValue<String> call(
               CellDataFeatures<ObservableList<StringProperty>, String> cellDataFeatures) {
             ObservableList<StringProperty> values = cellDataFeatures.getValue();
-            if (columnIndex >= values.size()) {
-              return new SimpleStringProperty("");
-            } else {
-              return cellDataFeatures.getValue().get(columnIndex);
+            // Pad to current value if necessary:
+            for (int index = values.size(); index <= columnIndex; index++) {
+                values.add(index, new SimpleStringProperty(""));
             }
+            return cellDataFeatures.getValue().get(columnIndex);
           }
         });
     column.setCellFactory(TextFieldTableCell.<ObservableList<StringProperty>>forTableColumn());
@@ -159,7 +176,40 @@ public class DynamicTable extends Application {
     return new BufferedReader(new InputStreamReader(in));
   }
 
-  public static void main(String[] args) {
+  private void save(final Stage primaryStage,
+		final TableView<ObservableList<StringProperty>> table,
+		final CheckBox headerCheckBox, final FileChooser fileChooser) {
+	File file = fileChooser.showSaveDialog(primaryStage);
+	if (file != null) {
+	    try (PrintWriter out = new PrintWriter(file)) {
+		   if (headerCheckBox.isSelected()) {
+		       for (Iterator<TableColumn<ObservableList<StringProperty>, ?>> iterator = table.getColumns().iterator(); iterator.hasNext(); ) {
+		           TableColumn<ObservableList<StringProperty>,?> col = iterator.next();
+		           out.print(col);
+		           if (iterator.hasNext()) {
+		               out.print("\t");
+		           }
+		       }
+		       out.println();
+		   }
+		   for (ObservableList<StringProperty> row : table.getItems() ) {
+		       
+		       for (Iterator<StringProperty> iterator = row.iterator(); iterator.hasNext();) {
+		           StringProperty sp = iterator.next();
+		           out.print(sp.get());
+		           if (iterator.hasNext()) {
+		               out.print("\t");
+		           }
+		       }
+		       out.print("\n");
+		   }
+	    } catch (IOException exc) {
+	        exc.printStackTrace();
+	    }
+	}
+}
+
+public static void main(String[] args) {
     launch(args);
   }
 }
